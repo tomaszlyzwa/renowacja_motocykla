@@ -67,7 +67,7 @@ main{padding-block:28px 64px}
 .bar{height:8px;background:var(--sunk);border-radius:99px;overflow:hidden}
 .bar>i{display:block;height:100%;background:var(--brass);border-radius:99px;transition:width .4s}
 .bar.done>i{background:var(--ok)}
-.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:9px 16px;border-radius:8px;font-size:14px;z-index:50;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:9px 16px;border-radius:8px;font-size:14px;z-index:50;opacity:0;transition:opacity .2s;pointer-events:none;max-width:min(560px,calc(100vw - 32px));text-align:center}
 .toast.on{opacity:1}
 .example{font:600 11px/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;background:var(--brass-soft);color:var(--brass);padding:5px 8px;border-radius:6px}
 
@@ -283,6 +283,22 @@ dialog.wide #dlgc{position:relative}
 .kv dt{color:var(--muted)}.kv dd{margin:0;font-family:var(--f-mono);overflow-wrap:anywhere}
 .steps{margin:0;padding-left:20px;display:grid;gap:6px;font-size:14px;max-width:75ch}
 .note-box{background:var(--brass-soft);border-radius:8px;padding:10px 12px;font-size:14px}
+
+.ro-only{display:none!important}
+html.ro .ro-only{display:inline-flex!important}
+html.ro .robar.ro-only{display:block!important}
+html.ro .edit-only{display:none!important}
+html.ro .seg button{pointer-events:none}
+html.ro .seg button:not([aria-pressed="true"]){opacity:.45}
+html.ro ul.tasks label{cursor:default}
+html.ro ul.tasks label:hover{background:none}
+.robar{background:var(--green-soft);color:var(--green);font-size:13px;text-align:center;padding-block:6px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.robar button{all:unset;cursor:pointer;text-decoration:underline;font-weight:600}
+.login-form{display:grid;gap:12px}
+.login-form details{font-size:14px}
+.login-form .err{color:var(--danger);font-size:14px}
+.share{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.share input{flex:1 1 280px;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--f-mono);font-size:13px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 
@@ -306,12 +322,14 @@ dialog.wide #dlgc{position:relative}
     </a>
     <nav class="tabs" aria-label="Główne">
       <button data-view="home" aria-current="page">Status prac</button>
-      <button data-view="admin">Panel administracyjny</button>
+      <button data-view="admin" class="edit-only">Panel administracyjny</button>
     </nav>
     <button class="syncpill" id="syncpill" hidden></button>
+    <button class="btn sm ro-only" id="loginBtn" title="Zaloguj to urządzenie do edycji">🔒 Edytuj</button>
   </div>
 </header>
 
+<div class="robar ro-only" id="robar" style="display:none">Tryb podglądu — tylko do odczytu. <button id="robarLogin">Zaloguj do edycji</button></div>
 <main class="wrap" id="app"></main>
 
 <dialog id="dlg"><div id="dlgc"></div></dialog>
@@ -424,11 +442,11 @@ const $=(q,el=document)=>el.querySelector(q);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const getP=id=>S.projects.find(p=>p.id===id);
 const fmtD=d=>{if(!d)return'—';const x=new Date(d);return isNaN(x)?d:x.toLocaleDateString('pl-PL',{day:'numeric',month:'short',year:'numeric'})};
-let toastT;function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('on'),1800)}
+let toastT;function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('on'),Math.max(1800,Math.min(9000,m.length*60)))}
 const saveT={};function save(p,quiet){clearTimeout(saveT[p.id]);saveT[p.id]=setTimeout(async()=>{try{await store.putProject(p);if(!quiet)toast('Zapisano')}catch(e){toast('Nie udało się zapisać — za mało miejsca w przeglądarce?')}},250)}
 
 /* ====== Router ====== */
-function go(view){S.view=view;S.confirm=null;document.querySelectorAll('nav.tabs button').forEach(b=>b.setAttribute('aria-current',b.dataset.view===view?'page':'false'));try{history.replaceState(null,'',view==='admin'?'#panel':'#start')}catch(e){}render();window.scrollTo(0,0)}
+function go(view){if(view==='admin'&&Sync.ro){openLogin();view='home'}S.view=view;S.confirm=null;document.querySelectorAll('nav.tabs button').forEach(b=>b.setAttribute('aria-current',b.dataset.view===view?'page':'false'));try{history.replaceState(null,'',view==='admin'?'#panel':'#start')}catch(e){}render();window.scrollTo(0,0)}
 document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>go(b.dataset.view));
 $('#brand').onclick=e=>{e.preventDefault();go('home')};
 function render(){S.view==='admin'?renderAdmin():renderHome()}
@@ -437,7 +455,7 @@ function render(){S.view==='admin'?renderAdmin():renderHome()}
 function ring(pct){const r=40,c=2*Math.PI*r;return`<svg class="ring" viewBox="0 0 96 96" aria-hidden="true"><circle cx="48" cy="48" r="${r}" fill="none" stroke="var(--sunk)" stroke-width="8"/><circle cx="48" cy="48" r="${r}" fill="none" stroke="var(--brass)" stroke-width="8" stroke-linecap="round" stroke-dasharray="${c*pct/100} ${c}" transform="rotate(-90 48 48)"/><path d="M38 48h18m-6-6 6 6-6 6" stroke="var(--fg)" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg>`}
 function renderHome(){
   const app=$('#app');
-  if(!S.projects.length){app.innerHTML=`<div class="empty"><h3>Brak projektów</h3><p>Załóż pierwszy projekt renowacji w panelu administracyjnym.</p><button class="btn primary" id="toAdm">Załóż projekt</button></div>`;$('#toAdm').onclick=()=>go('admin');return}
+  if(!S.projects.length){app.innerHTML=Sync.ro?`<div class="empty"><h3>${Sync.loading?'Wczytuję stan prac…':'Brak danych do wyświetlenia'}</h3><p>${Sync.loading?'Pobieram najnowszy stan z GitHub.':esc(Sync.msg||'Właściciel nie opublikował jeszcze żadnego projektu.')}</p></div>`:`<div class="empty"><h3>Brak projektów</h3><p>Załóż pierwszy projekt renowacji w panelu administracyjnym.</p><button class="btn primary" id="toAdm">Załóż projekt</button></div>`;const ta=$('#toAdm');if(ta)ta.onclick=()=>go('admin');return}
   if(!getP(S.cur))S.cur=S.projects[0].id;
   const p=getP(S.cur), pct=projPct(p), ci=currentIdx(p), cs=p.stages?.[ci];
   const opts=S.projects.map(x=>`<option value="${x.id}"${x.id===p.id?' selected':''}>${esc(x.make)} ${esc(x.model)} — ${esc(x.name)}</option>`).join('');
@@ -474,7 +492,7 @@ function renderHome(){
         <div class="bar${v>=100?' done':''}"><i style="width:${v}%"></i></div>
         <span class="p">${v}%</span>
       </li>`}).join('')}</ol>
-  </section>`:`<div class="empty" style="margin-top:28px"><h3>Plan prac nie jest jeszcze gotowy</h3><p>Wygeneruj bazowy plan w panelu administracyjnym.</p><button class="btn primary" id="toPlan">Przejdź do planu</button></div>`}`;
+  </section>`:`<div class="empty" style="margin-top:28px"><h3>Plan prac nie jest jeszcze gotowy</h3><p>Wygeneruj bazowy plan w panelu administracyjnym.</p><button class="btn primary edit-only" id="toPlan">Przejdź do planu</button></div>`}`;
   $('#pick').onchange=e=>{S.cur=e.target.value;ls('rvr.cur',S.cur);renderHome()};
   app.querySelectorAll('[data-st]').forEach(b=>b.onclick=()=>openStage(p,+b.dataset.st));
   const op=$('#openParts');if(op)op.onclick=()=>openParts(p);
@@ -493,11 +511,11 @@ function openStage(p,i){
     <div class="dlg-body">
       ${s.desc?`<div><h4 class="label">Co obejmuje etap</h4><p style="margin:0">${esc(s.desc)}</p></div>`:''}
       <div><h4 class="label">Zadania ${s.tasks.length?`(${s.tasks.filter(t=>t.done).length}/${s.tasks.length} wykonane)`:''}</h4>
-        ${s.tasks.length?`<ul class="tasks">${s.tasks.map(t=>`<li class="${t.done?'done':''}"><label><input type="checkbox" id="t-${t.id}" data-t="${t.id}"${t.done?' checked':''}><span>${esc(t.text)}</span></label></li>`).join('')}</ul>`:'<p style="margin:0;color:var(--muted)">Brak zadań — dodaj je w panelu (Plan prac).</p>'}
+        ${s.tasks.length?`<ul class="tasks">${s.tasks.map(t=>`<li class="${t.done?'done':''}"><label><input type="checkbox" id="t-${t.id}" data-t="${t.id}"${t.done?' checked':''}${Sync.ro?' disabled':''}><span>${esc(t.text)}</span></label></li>`).join('')}</ul>`:'<p style="margin:0;color:var(--muted)">Brak zadań — dodaj je w panelu (Plan prac).</p>'}
       </div>
       <div><h4 class="label">Dziennik prac</h4>
         <div class="log">${(s.notes||[]).slice().reverse().map(n=>`<div class="entry"><time>${fmtD(n.d)}</time><div>${esc(n.t)}</div></div>`).join('')||'<p style="margin:0;color:var(--muted)">Brak wpisów.</p>'}</div>
-        <form class="addnote" id="nf" style="margin-top:12px"><input id="nt" placeholder="Co zostało zrobione?" aria-label="Nowy wpis w dzienniku"><button class="btn primary sm">Dodaj wpis</button></form>
+        <form class="addnote edit-only" id="nf" style="margin-top:12px"><input id="nt" placeholder="Co zostało zrobione?" aria-label="Nowy wpis w dzienniku"><button class="btn primary sm">Dodaj wpis</button></form>
       </div>
       ${(p.parts||[]).length&&/demontaż|inwentaryz|katalog/i.test(s.name)?`<div class="panel" style="padding:14px 16px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:var(--bg)"><div><h4 class="label" style="margin:0 0 2px">Weryfikacja części</h4><span>Sprawdzono ${partsStats(p).checked} z ${p.parts.length} · do kupienia ${partsStats(p).buy}</span></div><button class="btn primary sm" id="stParts">Otwórz listę części</button></div>`:''}
       ${(p.docs||[]).length?`<div><h4 class="label">Dokumentacja projektu</h4><p style="margin:0;color:var(--muted);font-size:14px">${p.docs.length} plik(i) w panelu → Dokumentacja. Powiązanie dokumentów z etapami — w kolejnej iteracji.</p></div>`:''}
@@ -522,7 +540,7 @@ function renderAdmin(){
       <ul>${S.projects.map(p=>`<li><button data-p="${p.id}" aria-current="${p.id===S.adm}"><b>${esc(p.make)} ${esc(p.model)}</b><small>${esc(p.name)} · ${projPct(p)}%</small></button></li>`).join('')}</ul>
       <button class="btn primary" id="newP">+ Nowy projekt</button>
       <div class="sep"></div>
-      <ul><li><button data-adm="data" aria-current="${S.adm==='data'}"><b>Dane i synchronizacja</b><small>Plik JSON · GitHub · ${esc(Sync.label())}</small></button></li></ul>
+      <ul><li><button data-adm="data" aria-current="${S.adm==='data'}"><b>Dane i synchronizacja</b><small>Plik JSON · GitHub · link · ${esc(Sync.label())}</small></button></li></ul>
     </aside>
     <div class="admin-main" id="am"></div></div>`;
   app.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{S.adm=b.dataset.p;S.confirm=null;renderAdmin()});
@@ -690,7 +708,7 @@ function tabDocs(p){
   $('#tabc').querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>openDoc(p.docs.find(d=>d.id===b.dataset.open)));
 }
 let lastURL;
-async function openDoc(d){let f=await store.getFile(d.id);if(!f&&d.remote&&Sync.on()){toast('Pobieram plik z GitHub…');try{const blob=await Sync.getRaw(d.remote,true);f={id:d.id,blob:new Blob([blob],{type:d.type}),type:d.type,name:d.fname};await store.putFile(f)}catch(e){}}
+async function openDoc(d){let f=await store.getFile(d.id);if(!f&&d.remote){toast('Pobieram plik z GitHub…');try{const blob=Sync.on()?await Sync.getRaw(d.remote,true):await Sync.publicRaw(d.remote,true);f={id:d.id,blob:new Blob([blob],{type:d.type}),type:d.type,name:d.fname};await store.putFile(f)}catch(e){}}
   if(!f)return toast(d.remote?'Plik jest w GitHub — skonfiguruj synchronizację, aby go pobrać':'Nie znaleziono pliku na tym urządzeniu');
   if(lastURL)URL.revokeObjectURL(lastURL);lastURL=URL.createObjectURL(f.blob);
   const img=(d.type||'').startsWith('image/'),pdf=d.type==='application/pdf';
@@ -847,11 +865,11 @@ function openParts(p){
       <div class="pinfo"><b>${esc(x.name)}</b><span>${x.bag?'<b class="bagno">'+esc(x.bag)+'</b> · ':''}${x.pos?'poz. '+esc(x.pos)+' · ':''}${x.nr?esc(x.nr)+' · ':''}×${x.qty}${x.k!=='c'?' · '+KIND_LABEL[x.k]:''}</span>${x.note?`<span class="pnote">${esc(x.note)}</span>`:''}</div>
       <div class="seg seg-h" role="group" aria-label="Czy jest"><button data-f="have" data-v="yes" aria-pressed="${x.have==='yes'}">Jest</button><button data-f="have" data-v="no" aria-pressed="${x.have==='no'}">Brak</button></div>
       <div class="seg seg-d" role="group" aria-label="Decyzja"><button data-f="dec" data-v="use" aria-pressed="${x.dec==='use'}">Użyć</button><button data-f="dec" data-v="regen" aria-pressed="${x.dec==='regen'}">Regeneracja</button><button data-f="dec" data-v="buy" aria-pressed="${x.dec==='buy'}">Kupić</button><button data-f="dec" data-v="na" aria-pressed="${x.dec==='na'}" title="Nie dotyczy (inny wariant)">n/d</button></div>
-      <span class="pacts"><button class="btn ghost sm" data-lbl aria-label="Drukuj etykietę na torebkę" title="Drukuj etykietę">${PRN_ICON}</button>${x.rys?`<button class="btn ghost sm rbtn" data-rys="${x.rys}" data-pos="${esc(x.pos||'')}" aria-label="Rysunek z katalogu, pozycja ${esc(x.pos||'')}" title="Rysunek z katalogu">${RYS_ICON}</button>`:''}<button class="btn ghost sm nbtn" data-note aria-label="Notatka">✎</button></span></div>`;
+      <span class="pacts"><button class="btn ghost sm edit-only" data-lbl aria-label="Drukuj etykietę na torebkę" title="Drukuj etykietę">${PRN_ICON}</button>${x.rys?`<button class="btn ghost sm rbtn" data-rys="${x.rys}" data-pos="${esc(x.pos||'')}" aria-label="Rysunek z katalogu, pozycja ${esc(x.pos||'')}" title="Rysunek z katalogu">${RYS_ICON}</button>`:''}<button class="btn ghost sm nbtn edit-only" data-note aria-label="Notatka">✎</button></span></div>`;
   const count=()=>{const s=partsStats(p);$('#pcount').textContent=`sprawdzono ${s.checked}/${s.all} · kupić ${s.buy} · regeneracja ${s.regen}`};
   const drawList=()=>{const items=p.parts.filter(match);
     if(!items.length){body.innerHTML=`<div class="plist"><div class="empty" style="margin-top:18px"><h3>Nic nie pasuje do filtrów</h3><p>Zmień status lub wyczyść wyszukiwanie.</p></div></div>`;return}
-    let h='',last=null;items.forEach(x=>{if(x.grp!==last){const all=p.parts.filter(y=>y.grp===x.grp),ch=all.filter(y=>y.have||y.dec==='na').length;const rs=grpDrawings(x.grp);h+=`<div class="pgrp"><h3>${esc(grpTitle(x.grp))}</h3><span style="display:flex;gap:10px;align-items:center"><span class="label">${esc(grpArea(x.grp))} · ${ch}/${all.length}</span><button class="btn sm" data-glbl="${esc(x.grp)}" title="Drukuj etykiety dla widocznych części zespołu">${PRN_ICON} Etykiety</button>${rs.length?`<button class="btn sm" data-rys="${rs[0]}" data-pos="">${RYS_ICON} Rysunek</button>`:''}</span></div>`;last=x.grp}h+=rowHTML(x)});
+    let h='',last=null;items.forEach(x=>{if(x.grp!==last){const all=p.parts.filter(y=>y.grp===x.grp),ch=all.filter(y=>y.have||y.dec==='na').length;const rs=grpDrawings(x.grp);h+=`<div class="pgrp"><h3>${esc(grpTitle(x.grp))}</h3><span style="display:flex;gap:10px;align-items:center"><span class="label">${esc(grpArea(x.grp))} · ${ch}/${all.length}</span><button class="btn sm edit-only" data-glbl="${esc(x.grp)}" title="Drukuj etykiety dla widocznych części zespołu">${PRN_ICON} Etykiety</button>${rs.length?`<button class="btn sm" data-rys="${rs[0]}" data-pos="">${RYS_ICON} Rysunek</button>`:''}</span></div>`;last=x.grp}h+=rowHTML(x)});
     body.innerHTML=`<div class="plist">${h}</div>`};
   const drawShop=()=>{const buy=p.parts.filter(x=>x.dec==='buy'),reg=p.parts.filter(x=>x.dec==='regen');
     const tbl=(a,title)=>a.length?`<h3 style="font-size:22px;margin:18px 0 8px">${title} <span class="label">${a.length} poz.</span></h3><div class="tbl"><table><thead><tr><th>Część</th><th>Nr katalogowy</th><th>Ilość</th><th>Zespół / poz.</th><th>Notatka</th></tr></thead><tbody>${a.map(x=>`<tr><td>${esc(x.name)}</td><td class="mono">${esc(x.nr)}</td><td class="mono">${x.qty}</td><td>${esc(grpTitle(x.grp))}${x.pos?` · tab. ${x.rys}, poz. ${esc(x.pos)}`:''}</td><td>${esc(x.note)}</td></tr>`).join('')}</tbody></table></div>`:'';
@@ -866,6 +884,7 @@ function openParts(p){
     const rb=e.target.closest('[data-rys]');if(rb){showDrawing(+rb.dataset.rys,rb.dataset.pos,rb.closest('.pgrp')?null:p.parts.find(y=>y.id===rb.closest('.prow').dataset.id));return}
     const row=e.target.closest('.prow');if(!row)return;const x=p.parts.find(y=>y.id===row.dataset.id);
     const b=e.target.closest('button[data-f]');
+    if(b&&Sync.ro)return;
     if(b){const f=b.dataset.f,v=b.dataset.v;x[f]=x[f]===v?'':v;
       if(f==='have'&&v==='no'&&x.have==='no'&&!x.dec)x.dec='buy';
       if(f==='have'&&v==='yes'&&x.have==='yes'&&x.dec==='buy')x.dec='';
@@ -918,6 +937,11 @@ function tabParts(p){
 
 /* ====== Kopia JSON i synchronizacja z GitHub ====== */
 const STATE_FILE='renowacja_motocykla_dane.json';
+const DATA_BRANCH='dane', DATA_PATH='data/'+STATE_FILE;
+/* na GitHub Pages właściciel i repozytorium wynikają z adresu: <login>.github.io/<repo>/ */
+function pagesRepo(){const m=location.hostname.match(/^([a-z0-9-]+)\.github\.io$/i);if(!m)return null;
+  const seg=location.pathname.split('/').filter(Boolean)[0];return{owner:m[1],repo:seg&&!/\.html?$/i.test(seg)?decodeURIComponent(seg):m[1]+'.github.io'}}
+const ON_PAGES=!!pagesRepo();
 function b64FromBytes(u8){let s='';const C=0x8000;for(let i=0;i<u8.length;i+=C)s+=String.fromCharCode.apply(null,u8.subarray(i,i+C));return btoa(s)}
 function b64FromText(t){return b64FromBytes(new TextEncoder().encode(t))}
 function textFromB64(b){const bin=atob(b.replace(/\n/g,''));const u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);return new TextDecoder().decode(u8)}
@@ -962,14 +986,33 @@ async function importJSON(file,mode){
 }
 
 const Sync={
-  cfg:null,sha:null,state:'off',msg:'',last:0,timer:null,busy:false,again:false,
-  load(){try{this.cfg=JSON.parse(ls('rvr.sync')||'null')}catch(e){this.cfg=null}this.last=+(ls('rvr.synclast')||0);this.state=this.on()?(ls('rvr.dirty')==='1'?'dirty':'ok'):'off';this.ui()},
+  cfg:null,sha:null,state:'off',msg:'',last:0,timer:null,busy:false,again:false,ro:false,loading:false,
+  load(){let a=null;try{a=JSON.parse(ls('rvr.auth')||'null')}catch(e){}
+    const pr=pagesRepo();
+    this.cfg=a&&a.token?{owner:a.owner||(pr&&pr.owner)||'',repo:a.repo||(pr&&pr.repo)||'',branch:DATA_BRANCH,path:DATA_PATH,token:a.token}:null;
+    this.ro=ON_PAGES&&!this.on();
+    this.last=+(ls('rvr.synclast')||0);this.state=this.ro?'ro':this.on()?(ls('rvr.dirty')==='1'?'dirty':'ok'):'off';this.ui()},
+  target(){if(this.cfg&&this.cfg.owner)return{owner:this.cfg.owner,repo:this.cfg.repo};let a=null;try{a=JSON.parse(ls('rvr.auth')||'null')}catch(e){}return pagesRepo()||(a&&a.owner?a:null)},
+  publicUrls(path){const t=this.target();if(!t)return[];const o=encodeURIComponent(t.owner),r=encodeURIComponent(t.repo),p=path.split('/').map(encodeURIComponent).join('/');
+    return[`https://api.github.com/repos/${o}/${r}/contents/${p}?ref=${DATA_BRANCH}&t=${Date.now()}`,`https://raw.githubusercontent.com/${o}/${r}/${DATA_BRANCH}/${p}`]},
+  async publicRaw(path,binary){
+    for(const u of this.publicUrls(path)){try{const r=await fetch(u,{headers:u.includes('api.github.com')?{Accept:'application/vnd.github.raw+json'}:{},cache:'no-store'});if(r.ok)return binary?r.arrayBuffer():r.text()}catch(e){}}
+    const r=await fetch(path+'?t='+Date.now(),{cache:'no-store'});if(!r.ok)throw new Error('Nie udało się pobrać '+path);return binary?r.arrayBuffer():r.text()},
+  /* tryb podglądu: zawsze zastępuje lokalną kopię stanem opublikowanym przez właściciela */
+  async publicLoad(){
+    this.loading=true;if(!S.projects.length)render();
+    try{const st=JSON.parse(await this.publicRaw(DATA_PATH));
+      if(Array.isArray(st.projects)){await applyProjects(st.projects,st.deleted||[]);this.last=Date.now();ls('rvr.synclast',String(this.last));this.msg='';this.state='ro'}}
+    catch(e){this.msg='Nie udało się pobrać danych: '+(e.message||e)}
+    this.loading=false;this.ui();render()},
   on(){return!!(this.cfg&&this.cfg.token&&this.cfg.owner&&this.cfg.repo)},
-  label(){if(!this.on())return'tylko to urządzenie';return{ok:'zsynchronizowano',dirty:'czeka na wysłanie',busy:'synchronizacja…',err:'błąd synchronizacji',off:'wyłączona'}[this.state]||''},
-  ui(){const b=$('#syncpill');if(!b)return;b.hidden=!this.on();b.dataset.s=this.state;
-    b.textContent=this.state==='ok'&&this.last?'GitHub · '+new Date(this.last).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'}):'GitHub · '+this.label();b.title=this.msg||''},
+  label(){if(this.ro)return'tryb podglądu';if(!this.on())return'tylko to urządzenie';return{ok:'zsynchronizowano',dirty:'czeka na wysłanie',busy:'synchronizacja…',err:'błąd synchronizacji',off:'wyłączona'}[this.state]||''},
+  ui(){document.documentElement.classList.toggle('ro',this.ro);
+    const b=$('#syncpill');if(!b)return;const hm=this.last?new Date(this.last).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'}):'';
+    b.hidden=!this.on()&&!this.ro;b.dataset.s=this.ro?(this.msg?'err':'ok'):this.state;
+    b.textContent=this.ro?(this.loading?'Podgląd · wczytuję…':'Podgląd'+(hm?' · stan z '+hm:'')):(this.state==='ok'&&hm?'GitHub · '+hm:'GitHub · '+this.label());b.title=this.msg||''},
   tomb(id){const t=tombs();t.push({id,at:Date.now()});ls('rvr.deleted',JSON.stringify(t))},
-  changed(){if(!this.on())return;ls('rvr.dirty','1');if(this.state!=='busy')this.state='dirty';this.ui();clearTimeout(this.timer);this.timer=setTimeout(()=>this.sync(),4000)},
+  changed(){if(!this.on())return;ls('rvr.dirty','1');if(this.state!=='busy')this.state='dirty';this.ui();clearTimeout(this.timer);this.timer=setTimeout(()=>this.sync(),8000)},
   url(path){const c=this.cfg;return`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${path.split('/').map(encodeURIComponent).join('/')}`},
   hdr(raw){return{Authorization:'Bearer '+this.cfg.token,Accept:raw?'application/vnd.github.raw+json':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}},
   async meta(path){const r=await fetch(this.url(path)+'?ref='+encodeURIComponent(this.cfg.branch||'main')+'&t='+Date.now(),{headers:this.hdr(false),cache:'no-store'});
@@ -985,6 +1028,32 @@ const Sync={
     if(r.status===403)return'Brak uprawnień — token potrzebuje dostępu „Contents: Read and write” do tego repozytorium (403).';
     if(r.status===404)return'Nie znaleziono repozytorium lub gałęzi — sprawdź właściciela, nazwę i gałąź (404).';
     return`GitHub odpowiedział ${r.status}${m?': '+m:''}`},
+  /* sprawdza repozytorium, uprawnienia tokenu i gałąź; zwraca konkretny opis problemu */
+  async diagnose(){
+    const c=this.cfg,h=this.hdr(false),base=`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}`;
+    const u=await fetch('https://api.github.com/user',{headers:h,cache:'no-store'});
+    if(u.status===401)throw new Error('Token jest nieprawidłowy lub wygasł. Wygeneruj nowy i wklej go ponownie.');
+    let login='';if(u.ok){try{login=(await u.json()).login||''}catch(e){}}
+    const r=await fetch(base,{headers:h,cache:'no-store'});
+    if(r.status===404){
+      throw new Error(`Token nie widzi repozytorium „${c.owner}/${c.repo}”. Sprawdź: 1) czy repozytorium istnieje pod tą nazwą${login&&login.toLowerCase()!==c.owner.toLowerCase()?`, a właściciel to „${login}”, a nie „${c.owner}”`:''}; 2) czy w ustawieniach tokenu w „Repository access” wybrano właśnie to repozytorium.`)}
+    if(!r.ok)throw new Error(await this.err(r));
+    const repo=await r.json();
+    if(repo.permissions&&repo.permissions.push===false)throw new Error('Token ma dostęp tylko do odczytu. W ustawieniach tokenu ustaw „Contents: Read and write”.');
+    if(repo.size===0&&!repo.default_branch)throw new Error('Repozytorium jest puste. Dodaj w nim plik README (Add file → Create new file), żeby powstała gałąź main.');
+    if(repo.private)throw new Error('Repozytorium jest prywatne, więc osoby z linkiem nie zobaczą danych. Zmień je na Public: Settings → General → Danger Zone → Change visibility.');
+    const b=await fetch(`${base}/branches/${encodeURIComponent(DATA_BRANCH)}`,{headers:h,cache:'no-store'});
+    if(b.status===404){
+      const db=repo.default_branch||'main';
+      const ref=await fetch(`${base}/git/ref/heads/${encodeURIComponent(db)}`,{headers:h,cache:'no-store'});
+      if(!ref.ok)throw new Error('Repozytorium jest puste. Wgraj najpierw pliki aplikacji (index.html, data/) na gałąź main.');
+      const sha=(await ref.json()).object.sha;
+      const cr=await fetch(`${base}/git/refs`,{method:'POST',headers:Object.assign({'Content-Type':'application/json'},h),body:JSON.stringify({ref:'refs/heads/'+DATA_BRANCH,sha})});
+      if(!cr.ok&&cr.status!==422)throw new Error('Nie udało się utworzyć gałęzi „dane”: '+await this.err(cr));
+      return'Utworzono gałąź „dane” na zapis stanu.'}
+    if(!b.ok)throw new Error(await this.err(b));
+    return'';
+  },
   /* pełny cykl: pobierz → scal → wyślij, jeśli lokalnie jest coś nowszego */
   async sync(opts={}){
     if(!this.on())return;
@@ -993,6 +1062,7 @@ const Sync={
     this.busy=true;this.state='busy';this.ui();
     try{
       const path=this.cfg.path||STATE_FILE;
+      if(opts.connect){const note=await this.diagnose();if(note)toast(note)}
       for(let attempt=0;attempt<3;attempt++){
         const m=await this.meta(path);let remote={projects:[],deleted:[]};this.sha=m?m.sha:null;
         if(m){const txt=(m.content&&m.encoding==='base64')?textFromB64(m.content):await this.getRaw(path);try{remote=JSON.parse(txt)}catch(e){throw new Error('Plik '+path+' w repozytorium nie jest poprawnym JSON-em')}}
@@ -1013,7 +1083,7 @@ const Sync={
         if(changedLocally||opts.render)render();
         break;
       }
-    }catch(e){this.state='err';this.msg=e.message||String(e);if(opts.loud)toast(this.msg)}
+    }catch(e){let m=e.message||String(e);if(!opts.connect&&/\(404\)/.test(m)){try{await this.diagnose()}catch(d){m=d.message}}this.state='err';this.msg=m;if(opts.loud)toast(m)}
     this.busy=false;this.ui();
     if(S.view==='admin'&&S.adm==='data')renderData();
     if(this.again){this.again=false;this.sync()}
@@ -1023,7 +1093,7 @@ const Sync={
     if(!this.on())return;let changed=false;
     for(const p of S.projects)for(const d of p.docs||[]){
       if(d.remote)continue;const f=await store.getFile(d.id);if(!f)continue;
-      const path=`pliki/${d.id}-${safeName(d.fname||f.name||'plik')}`;
+      const path=`data/pliki/${d.id}-${safeName(d.fname||f.name||'plik')}`;
       try{await this.put(path,await blobToB64(f.blob),null,'Renowacja_motocykla: dokument '+(d.fname||''));d.remote=path;p.updated=Date.now();await store.putProject(p,true);changed=true}
       catch(e){if(e.conflict){d.remote=path;changed=true}else{this.msg='Nie wysłano pliku '+d.fname+': '+e.message}}
     }
@@ -1031,9 +1101,42 @@ const Sync={
   },
   async deleteRemote(path){if(!this.on())return;try{const m=await this.meta(path);if(m)await fetch(this.url(path),{method:'DELETE',headers:Object.assign({'Content-Type':'application/json'},this.hdr(false)),body:JSON.stringify({message:'Renowacja_motocykla: usunięcie dokumentu',sha:m.sha,branch:this.cfg.branch||'main'})})}catch(e){}}
 };
-window.addEventListener('online',()=>{if(Sync.on()&&ls('rvr.dirty')==='1')Sync.sync()});
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&Sync.on()&&Date.now()-Sync.last>30000)Sync.sync()});
-$('#syncpill').onclick=()=>{S.adm='data';go('admin')};
+window.addEventListener('online',()=>{if(Sync.on()&&ls('rvr.dirty')==='1')Sync.sync();else if(Sync.ro)Sync.publicLoad()});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible')return;if(Sync.on()&&Date.now()-Sync.last>30000)Sync.sync();else if(Sync.ro&&Date.now()-Sync.last>60000)Sync.publicLoad()});
+$('#syncpill').onclick=()=>{if(Sync.ro)return openLogin();S.adm='data';go('admin')};
+$('#loginBtn').onclick=()=>openLogin();$('#robarLogin').onclick=()=>openLogin();
+function shareUrl(){const t=pagesRepo();return t?location.origin+'/'+encodeURIComponent(t.repo)+'/':location.href.split('#')[0]}
+async function connectWith(cfg){
+  ls('rvr.auth',JSON.stringify({token:cfg.token,owner:cfg.owner,repo:cfg.repo}));
+  Sync.load();Sync.state='dirty';Sync.ui();
+  await Sync.sync({loud:false,render:true,connect:true});
+  if(Sync.state==='err'){const m=Sync.msg;try{localStorage.removeItem('rvr.auth')}catch(e){}Sync.load();if(Sync.ro)Sync.publicLoad();return m}
+  return'';
+}
+function openLogin(){
+  const t=Sync.target()||{owner:'',repo:''};const dlg=$('#dlg');
+  $('#dlgc').innerHTML=`<div class="dlg-head"><div class="row"><div><span class="label">To urządzenie</span><h2>Włącz edycję</h2></div><button class="btn ghost sm" id="dx" aria-label="Zamknij">✕</button></div></div>
+    <div class="dlg-body"><form class="login-form" id="lf">
+      <p style="margin:0">Wklej token GitHub z uprawnieniem <b>Contents: Read and write</b> do repozytorium <span class="mono">${esc(t.repo||'Renowacja_motocykla')}</span>. Token zostaje tylko w tej przeglądarce. Bez tokenu aplikacja działa w trybie podglądu.</p>
+      <div class="field"><label class="label" for="lg-token">Token</label><input id="lg-token" type="password" placeholder="github_pat_…" autocomplete="off" required></div>
+      <details${t.owner?'':' open'}><summary>Repozytorium</summary>
+        <div class="grid2" style="margin-top:10px"><div class="field"><label class="label" for="lg-owner">Właściciel (login)</label><input id="lg-owner" value="${esc(t.owner)}" autocomplete="off"></div>
+        <div class="field"><label class="label" for="lg-repo">Repozytorium</label><input id="lg-repo" value="${esc(t.repo||'Renowacja_motocykla')}" autocomplete="off"></div></div></details>
+      <div class="err" id="lg-err" role="alert"></div>
+      <div><button class="btn primary" id="lg-go">Włącz edycję</button></div></form></div>`;
+  $('#dx').onclick=()=>dlg.close();
+  $('#lf').onsubmit=async e=>{e.preventDefault();
+    let ow=$('#lg-owner').value.trim().replace(/^@/,'').replace(/^https?:\/\/(www\.)?github\.com\//i,'').split('/')[0],rp=$('#lg-repo').value.trim().replace(/^https?:\/\/(www\.)?github\.com\//i,'').replace(/\.git$/,'');
+    if(rp.includes('/')){const [a,b]=rp.split('/');if(!ow)ow=a;rp=b}
+    const token=$('#lg-token').value.trim();
+    if(ow.includes('@'))return $('#lg-err').textContent='Wpisz login GitHub (nazwę użytkownika), a nie adres e-mail.';
+    if(!ow||!rp||!token)return $('#lg-err').textContent='Uzupełnij token, właściciela i repozytorium.';
+    $('#lg-go').disabled=true;$('#lg-go').textContent='Sprawdzam…';$('#lg-err').textContent='';
+    const err=await connectWith({owner:ow,repo:rp,token});
+    if(err){$('#lg-err').textContent=err;$('#lg-go').disabled=false;$('#lg-go').textContent='Włącz edycję';return}
+    dlg.close();toast('Edycja włączona na tym urządzeniu');render()};
+  if(!dlg.open)dlg.showModal();$('#lg-token').focus();
+}
 
 function renderData(){
   const c=Sync.cfg||{owner:'',repo:'',branch:'main',path:STATE_FILE,token:''};
@@ -1057,31 +1160,27 @@ function renderData(){
     </section>
 
     <section class="panel">
-      <h3>Synchronizacja przez GitHub</h3>
-      <p>Każde urządzenie zapisuje i pobiera stan z pliku ${STATE_FILE} w Twoim repozytorium danych. Zmiany wysyłają się automatycznie kilka sekund po edycji, a przy otwarciu aplikacji pobiera się najnowsza wersja. Działa offline: zmiany czekają i wysyłają się po powrocie internetu.</p>
-      ${inFrame?'<div class="note-box">W podglądzie online połączenie z GitHub jest zablokowane. Synchronizacja działa w wersji z GitHub Pages i w pliku otwartym lokalnie.</div>':''}
-      <form id="sf" class="grid2">
-        <div class="field"><label class="label" for="s-owner">Właściciel (login GitHub)</label><input id="s-owner" value="${esc(c.owner)}" placeholder="np. tlyzwa" autocomplete="off"></div>
-        <div class="field"><label class="label" for="s-repo">Repozytorium danych</label><input id="s-repo" value="${esc(c.repo)}" placeholder="Renowacja_motocykla_dane" autocomplete="off"></div>
-        <div class="field"><label class="label" for="s-branch">Gałąź</label><input id="s-branch" value="${esc(c.branch||'main')}"></div>
-        <div class="field"><label class="label" for="s-path">Plik stanu</label><input id="s-path" class="mono" value="${esc(c.path||STATE_FILE)}"></div>
-        <div class="field" style="grid-column:1/-1"><label class="label" for="s-token">Token dostępu (fine-grained, Contents: Read and write)</label><input id="s-token" type="password" value="${esc(c.token)}" placeholder="github_pat_…" autocomplete="off"></div>
-        <div class="toolbar" style="grid-column:1/-1">
-          <button class="btn primary">${Sync.on()?'Zapisz ustawienia i synchronizuj':'Połącz i synchronizuj'}</button>
-          ${Sync.on()?'<button type="button" class="btn" id="snow">Synchronizuj teraz</button><button type="button" class="btn ghost danger" id="soff">Odłącz to urządzenie</button>':''}
-        </div>
-      </form>
-      ${Sync.on()?`<dl class="kv"><dt>Stan</dt><dd>${esc(Sync.label())}</dd><dt>Ostatnia synchronizacja</dt><dd>${Sync.last?new Date(Sync.last).toLocaleString('pl-PL'):'—'}</dd><dt>Plik</dt><dd>${esc(c.owner)}/${esc(c.repo)}/${esc(c.path||STATE_FILE)}</dd>${Sync.msg?`<dt>Komunikat</dt><dd style="color:var(--danger)">${esc(Sync.msg)}</dd>`:''}</dl>`:''}
-      <p>Token jest zapisany tylko w tej przeglądarce. Na każdym urządzeniu wpisz go raz.</p>
+      <h3>GitHub: edycja i udostępnianie</h3>
+      <p>Stan zapisuje się w pliku <span class="mono">${DATA_PATH}</span> na gałęzi <span class="mono">${DATA_BRANCH}</span> repozytorium aplikacji. Urządzenia z tokenem mogą edytować, a każdy z linkiem widzi stan prac w trybie tylko do odczytu. Zmiany wysyłają się kilka sekund po edycji, a bez internetu czekają na połączenie.</p>
+      ${inFrame?'<div class="note-box">W podglądzie online połączenie z GitHub jest zablokowane. Użyj wersji z GitHub Pages.</div>':''}
+      ${Sync.on()?`<dl class="kv"><dt>Repozytorium</dt><dd>${esc(c.owner)}/${esc(c.repo)} · gałąź ${DATA_BRANCH}</dd><dt>Stan</dt><dd>${esc(Sync.label())}</dd><dt>Ostatnia synchronizacja</dt><dd>${Sync.last?new Date(Sync.last).toLocaleString('pl-PL'):'—'}</dd>${Sync.msg?`<dt>Komunikat</dt><dd style="color:var(--danger)">${esc(Sync.msg)}</dd>`:''}</dl>
+      <div class="toolbar"><button type="button" class="btn" id="snow">Synchronizuj teraz</button><button type="button" class="btn ghost danger" id="soff">Wyloguj to urządzenie</button></div>`
+      :`<div class="toolbar"><button class="btn primary" id="sconn">Połącz z GitHub (wklej token)</button></div>`}
+    </section>
+
+    <section class="panel">
+      <h3>Link do udostępnienia (tylko podgląd)</h3>
+      <div class="share"><input id="shareUrl" readonly value="${esc(shareUrl())}" aria-label="Link do aplikacji"><button class="btn" id="copyShare">Kopiuj link</button></div>
+      <p>Osoba z tym linkiem zobaczy stan prac, zdjęcia, etapy, listę części i rysunki, ale nie może niczego zmienić. Dane są publiczne: każdy, kto zna adres, może je przeczytać. Nie wpisuj tu nic poufnego.</p>
     </section>
 
     <section class="panel">
       <h3>Jak uruchomić na GitHub</h3>
       <ol class="steps">
-        <li>Utwórz repozytorium <b>aplikacji</b> <span class="mono">Renowacja_motocykla</span> i wrzuć do niego <span class="mono">index.html</span>, <span class="mono">data/</span> i <span class="mono">.nojekyll</span>. Włącz GitHub Pages: Settings → Pages → Deploy from branch → <span class="mono">main / root</span>.</li>
-        <li>Utwórz drugie, <b>prywatne</b> repozytorium na dane <span class="mono">Renowacja_motocykla_dane</span> z plikiem README, żeby miało gałąź main.</li>
-        <li>Wygeneruj token: Settings → Developer settings → Fine-grained tokens → dostęp tylko do <span class="mono">Renowacja_motocykla_dane</span>, uprawnienie <b>Contents: Read and write</b>.</li>
-        <li>Otwórz stronę <span class="mono">https://&lt;login&gt;.github.io/Renowacja_motocykla/</span>, wpisz tu login, repozytorium danych i token, potem kliknij „Połącz”. Powtórz na telefonie i drugim komputerze.</li>
+        <li>Repozytorium <span class="mono">Renowacja_motocykla</span> ustaw jako <b>Public</b> i wgraj do niego <span class="mono">index.html</span> oraz <span class="mono">data/</span>. Potem włącz Pages: Settings → Pages → Deploy from branch → <span class="mono">main / root</span>.</li>
+        <li>Wygeneruj token: Settings → Developer settings → Fine-grained tokens, z dostępem tylko do <span class="mono">Renowacja_motocykla</span> i uprawnieniem <b>Contents: Read and write</b>.</li>
+        <li>Na swoich urządzeniach otwórz stronę, kliknij „🔒 Edytuj” i wklej token. Gałąź <span class="mono">dane</span> utworzy się sama.</li>
+        <li>Innym osobom wyślij link. Zobaczą stan prac bez możliwości edycji.</li>
       </ol>
     </section>
   </div>`;
@@ -1089,12 +1188,11 @@ function renderData(){
   let mode='merge';const fi=$('#impf');
   $('#impm').onclick=()=>{mode='merge';fi.click()};$('#impr').onclick=()=>{mode='replace';fi.click()};
   fi.onchange=()=>{if(fi.files[0])importJSON(fi.files[0],mode);fi.value=''};
-  $('#sf').onsubmit=e=>{e.preventDefault();
-    const cfg={owner:$('#s-owner').value.trim(),repo:$('#s-repo').value.trim(),branch:$('#s-branch').value.trim()||'main',path:$('#s-path').value.trim()||STATE_FILE,token:$('#s-token').value.trim()};
-    if(!cfg.owner||!cfg.repo||!cfg.token)return toast('Uzupełnij login, repozytorium i token');
-    Sync.cfg=cfg;ls('rvr.sync',JSON.stringify(cfg));Sync.state='dirty';Sync.ui();toast('Łączę z GitHub…');Sync.sync({loud:true,render:true,connect:true}).then(()=>{if(Sync.state==='ok')toast('Zsynchronizowano z GitHub')})};
+  const sc=$('#sconn');if(sc)sc.onclick=()=>openLogin();
+  const cs=$('#copyShare');if(cs)cs.onclick=()=>{const i=$('#shareUrl');try{navigator.clipboard.writeText(i.value).then(()=>toast('Skopiowano link'),()=>{i.select();toast('Zaznaczono — skopiuj Ctrl+C')})}catch(e){i.select()}};
+
   const sn=$('#snow');if(sn)sn.onclick=()=>Sync.sync({loud:true,render:true});
-  const so=$('#soff');if(so)so.onclick=()=>{Sync.cfg=null;try{localStorage.removeItem('rvr.sync')}catch(e){}Sync.state='off';Sync.ui();toast('Odłączono — dane zostają na tym urządzeniu');renderAdmin()};
+  const so=$('#soff');if(so)so.onclick=()=>{try{localStorage.removeItem('rvr.auth')}catch(e){}Sync.load();toast(Sync.ro?'Wylogowano — to urządzenie jest teraz w trybie podglądu':'Wylogowano — dane zostają na tym urządzeniu');if(Sync.ro){go('home');Sync.publicLoad()}else renderAdmin()};
 }
 
 /* ====== Boot ====== */
@@ -1106,7 +1204,7 @@ function renderData(){
         t.objectStore('projects').getAll().onsuccess=e=>out.p=e.target.result;t.objectStore('files').getAll().onsuccess=e=>out.f=e.target.result;t.oncomplete=()=>{d.close();res(out)};t.onerror=()=>{d.close();res(null)}}});
     if(moved&&moved.p&&moved.p.length){for(const f of moved.f||[])await store.putFile(f);for(const p of moved.p)await store.putProject(p,true);S.projects=moved.p;ls('rvr.seeded','1')}}catch(e){}}
   Sync.load();
-  if(!S.projects.length&&ls('rvr.seeded')!=='1'){
+  if(!S.projects.length&&ls('rvr.seeded')!=='1'&&!Sync.ro){
     let seeded=false;
     if(!Sync.on()&&/^https?:/.test(location.protocol)){try{const r=await fetch('data/'+STATE_FILE,{cache:'no-store'});if(r.ok){const st=await r.json();if(Array.isArray(st.projects)&&st.projects.length){for(const p of st.projects)await store.putProject(p,true);S.projects=st.projects;seeded=true}}}catch(e){}}
     if(!seeded&&!Sync.on()){const ex=seedExample();S.projects=[ex];await store.putProject(ex,true)}
@@ -1114,7 +1212,7 @@ function renderData(){
   for(const p of S.projects){let ch=false;if(p.make==='SHL'&&!p.parts){p.parts=catalogParts();p.partsVer=CAT_VER;ch=true}else if(migrateParts(p))ch=true;if(ch){try{await store.putProject(p,true)}catch(e){}}}
   S.projects.sort((a,b)=>(a.created||0)-(b.created||0));
   S.cur=ls('rvr.cur')||S.projects[0]?.id;S.adm=S.cur;
-  const v=location.hash==='#panel'?'admin':'home';go(v);
-  if(Sync.on())Sync.sync({render:true});
+  const v=location.hash==='#panel'&&!Sync.ro?'admin':'home';go(v);
+  if(Sync.on())Sync.sync({render:true});else if(Sync.ro)Sync.publicLoad();
 })();
 </script>
